@@ -5,17 +5,20 @@ package api
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/dstotijn/hetty/pkg/proj"
 	"github.com/dstotijn/hetty/pkg/reqlog"
+	"github.com/dstotijn/hetty/pkg/scope"
 	"github.com/vektah/gqlparser/v2/gqlerror"
 )
 
 type Resolver struct {
 	RequestLogService *reqlog.Service
 	ProjectService    *proj.Service
+	ScopeService      *scope.Scope
 }
 
 type queryResolver struct{ *Resolver }
@@ -27,7 +30,7 @@ func (r *Resolver) Mutation() MutationResolver { return &mutationResolver{r} }
 func (r *queryResolver) HTTPRequestLogs(ctx context.Context) ([]HTTPRequestLog, error) {
 	opts := reqlog.FindRequestsOptions{OmitOutOfScope: false}
 	reqs, err := r.RequestLogService.FindRequests(ctx, opts)
-	if err == reqlog.ErrNoProject {
+	if err == proj.ErrNoProject {
 		return nil, &gqlerror.Error{
 			Path:    graphql.GetPath(ctx),
 			Message: "No active project.",
@@ -133,7 +136,7 @@ func parseRequestLog(req reqlog.Request) (HTTPRequestLog, error) {
 }
 
 func (r *mutationResolver) OpenProject(ctx context.Context, name string) (*Project, error) {
-	p, err := r.ProjectService.Open(name)
+	p, err := r.ProjectService.Open(ctx, name)
 	if err == proj.ErrInvalidName {
 		return nil, gqlerror.Errorf("Project name must only contain alphanumeric or space chars.")
 	}
@@ -178,6 +181,19 @@ func (r *queryResolver) Projects(ctx context.Context) ([]Project, error) {
 	return projects, nil
 }
 
+func (r *queryResolver) Scope(ctx context.Context) ([]ScopeRule, error) {
+	rules := r.ScopeService.Rules()
+	return scopeToScopeRules(rules), nil
+}
+
+func regexpToStringPtr(r *regexp.Regexp) *string {
+	if r == nil {
+		return nil
+	}
+	s := r.String()
+	return &s
+}
+
 func (r *mutationResolver) CloseProject(ctx context.Context) (*CloseProjectResult, error) {
 	if err := r.ProjectService.Close(); err != nil {
 		return nil, fmt.Errorf("could not close project: %v", err)
@@ -192,4 +208,65 @@ func (r *mutationResolver) DeleteProject(ctx context.Context, name string) (*Del
 	return &DeleteProjectResult{
 		Success: true,
 	}, nil
+}
+
+func (r *mutationResolver) SetScope(ctx context.Context, input []ScopeRuleInput) ([]ScopeRule, error) {
+	rules := make([]scope.Rule, len(input))
+	for i, rule := range input {
+		u, err := stringPtrToRegexp(rule.URL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid URL in scope rule: %v", err)
+		}
+		var headerKey, headerValue *regexp.Regexp
+		if rule.Header != nil {
+			headerKey, err = stringPtrToRegexp(rule.Header.Key)
+			if err != nil {
+				return nil, fmt.Errorf("invalid header key in scope rule: %v", err)
+			}
+			headerValue, err = stringPtrToRegexp(rule.Header.Key)
+			if err != nil {
+				return nil, fmt.Errorf("invalid header value in scope rule: %v", err)
+			}
+		}
+		body, err := stringPtrToRegexp(rule.Body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid body in scope rule: %v", err)
+		}
+		rules[i] = scope.Rule{
+			URL: u,
+			Header: scope.Header{
+				Key:   headerKey,
+				Value: headerValue,
+			},
+			Body: body,
+		}
+	}
+
+	if err := r.ScopeService.SetRules(ctx, rules); err != nil {
+		return nil, fmt.Errorf("could not set scope: %v", err)
+	}
+
+	return scopeToScopeRules(rules), nil
+}
+
+func stringPtrToRegexp(s *string) (*regexp.Regexp, error) {
+	if s == nil {
+		return nil, nil
+	}
+	return regexp.Compile(*s)
+}
+
+func scopeToScopeRules(rules []scope.Rule) []ScopeRule {
+	scopeRules := make([]ScopeRule, len(rules))
+	for i, rule := range rules {
+		scopeRules[i].URL = regexpToStringPtr(rule.URL)
+		if rule.Header.Key != nil || rule.Header.Value != nil {
+			scopeRules[i].Header = &ScopeHeader{
+				Key:   regexpToStringPtr(rule.Header.Key),
+				Value: regexpToStringPtr(rule.Header.Value),
+			}
+		}
+		scopeRules[i].Body = regexpToStringPtr(rule.Body)
+	}
+	return scopeRules
 }

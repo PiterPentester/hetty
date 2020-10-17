@@ -47,6 +47,28 @@ type Project struct {
 	IsActive bool   `json:"isActive"`
 }
 
+type ScopeHeader struct {
+	Key   *string `json:"key"`
+	Value *string `json:"value"`
+}
+
+type ScopeHeaderInput struct {
+	Key   *string `json:"key"`
+	Value *string `json:"value"`
+}
+
+type ScopeRule struct {
+	URL    *string      `json:"url"`
+	Header *ScopeHeader `json:"header"`
+	Body   *string      `json:"body"`
+}
+
+type ScopeRuleInput struct {
+	URL    *string           `json:"url"`
+	Header *ScopeHeaderInput `json:"header"`
+	Body   *string           `json:"body"`
+}
+
 type HTTPMethod string
 
 const (

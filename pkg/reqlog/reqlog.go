@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dstotijn/hetty/pkg/proj"
 	"github.com/dstotijn/hetty/pkg/proxy"
 	"github.com/dstotijn/hetty/pkg/scope"
 )
@@ -21,7 +22,6 @@ const LogBypassedKey contextKey = 0
 
 var (
 	ErrRequestNotFound = errors.New("reqlog: request not found")
-	ErrNoProject       = errors.New("reqlog: no project")
 )
 
 type Request struct {
@@ -136,7 +136,7 @@ func (svc *Service) RequestModifier(next proxy.RequestModifyFunc) proxy.RequestM
 		}
 
 		reqLog, err := svc.addRequest(req.Context(), *clone, body, now)
-		if err == ErrNoProject {
+		if err == proj.ErrNoProject {
 			ctx := context.WithValue(req.Context(), LogBypassedKey, true)
 			*req = *req.WithContext(ctx)
 			return
